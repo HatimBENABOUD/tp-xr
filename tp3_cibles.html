@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TP3 - Test de pointage</title>
+  <script src="https://cdn.jsdelivr.net/npm/aframe@1.7.1/dist/aframe-v1.7.1.min.js"></script>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; }
+    #info { position: fixed; top: 8px; left: 8px; right: 8px; z-index: 10; color: #fff;
+      font-weight: 700; text-shadow: 0 1px 5px #000; pointer-events: none; }
+    #demarrer { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 10;
+      font-size: 20px; padding: 14px 24px; border: 0; border-radius: 10px; color: #fff; background: #1565c0; }
+    #resultats { position: fixed; inset: 0; z-index: 20; display: none; overflow: auto; padding: 18px;
+      box-sizing: border-box; background: #fffffff5; color: #17212b; font: 16px system-ui, sans-serif; }
+    #resultats pre { background: #edf1f5; border-radius: 8px; padding: 12px; white-space: pre-wrap; }
+    #resultats button { font-size: 17px; padding: 10px 16px; }
+  </style>
+</head>
+<body>
+  <div id="info">Appuyez sur Démarrer, puis visez la sphère avec le point blanc et touchez l'écran.</div>
+  <button id="demarrer">Démarrer</button>
+  <div id="resultats"></div>
+
+  <a-scene vr-mode-ui="enabled: false" renderer="colorManagement: true">
+    <a-sky color="#26323f"></a-sky>
+    <a-entity camera position="0 1.6 0" look-controls>
+      <a-entity id="curseur" cursor="fuse: false" raycaster="objects: .cible; far: 10"
+        position="0 0 -1" geometry="primitive: ring; radiusInner: 0.012; radiusOuter: 0.02"
+        material="color: #fff; shader: flat"></a-entity>
+    </a-entity>
+  </a-scene>
+
+  <script>
+    // Paramètres de l'expérience définis dans le sujet.
+    const DIST = 2;
+    const ANGLES = [1.5, 3, 6];
+    const ESSAIS_PAR_TAILLE = 5;
+
+    function tailleDepuisAngle(angleDeg, distanceM) {
+      return 2 * distanceM * Math.tan((angleDeg * Math.PI / 180) / 2);
+    }
+
+    function melanger(tableau) {
+      for (let i = tableau.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [tableau[i], tableau[j]] = [tableau[j], tableau[i]];
+      }
+      return tableau;
+    }
+
+    let contexteAudio = null;
+    function bip(frequence = 700, duree = 0.08) {
+      try {
+        contexteAudio = contexteAudio || new (window.AudioContext || window.webkitAudioContext)();
+        if (contexteAudio.state === 'suspended') contexteAudio.resume();
+        const oscillateur = contexteAudio.createOscillator();
+        const gain = contexteAudio.createGain();
+        oscillateur.frequency.value = frequence;
+        gain.gain.value = 0.12;
+        oscillateur.connect(gain);
+        gain.connect(contexteAudio.destination);
+        oscillateur.start();
+        oscillateur.stop(contexteAudio.currentTime + duree);
+      } catch (erreur) { console.warn('Audio indisponible', erreur); }
+    }
+
+    const scene = document.querySelector('a-scene');
+    const curseur = document.getElementById('curseur');
+    const info = document.getElementById('info');
+    const boutonDemarrer = document.getElementById('demarrer');
+    let essais = [];
+    let indexEssai = 0;
+    let cible = null;
+    let debutEssai = 0;
+    let erreursEssai = 0;
+    let enCours = false;
+    const resultats = [];
+
+    function nouvelleCible() {
+      if (cible) cible.remove();
+      const angle = essais[indexEssai];
+      const diametre = tailleDepuisAngle(angle, DIST);
+      const azimut = (Math.random() * 140 - 70) * Math.PI / 180;
+      const elevation = (Math.random() * 50 - 15) * Math.PI / 180;
+      const x = DIST * Math.sin(azimut) * Math.cos(elevation);
+      const y = 1.6 + DIST * Math.sin(elevation);
+      const z = -DIST * Math.cos(azimut) * Math.cos(elevation);
+      cible = document.createElement('a-sphere');
+      cible.classList.add('cible');
+      cible.setAttribute('id', 'cible');
+      cible.setAttribute('radius', diametre / 2);
+      cible.setAttribute('position', { x, y, z });
+      cible.setAttribute('material', 'color: #ffca28; shader: flat');
+      scene.appendChild(cible);
+      info.textContent = `Essai ${indexEssai + 1} / ${essais.length} (cible de ${angle}°)`;
+      debutEssai = performance.now();
+      erreursEssai = 0;
+    }
+
+    function terminer() {
+      enCours = false;
+      if (cible) cible.remove();
+      const lignes = ['angle(°) | temps moyen (ms) | erreurs'];
+      const csv = ['angle_deg;temps_moyen_ms;erreurs'];
+      ANGLES.forEach(angle => {
+        const groupe = resultats.filter(r => r.angle === angle);
+        const tempsMoyen = groupe.reduce((s, r) => s + r.temps_ms, 0) / groupe.length;
+        const erreurs = groupe.reduce((s, r) => s + r.erreurs, 0);
+        lignes.push(`${angle} | ${tempsMoyen.toFixed(0)} | ${erreurs}`);
+        csv.push(`${angle};${tempsMoyen.toFixed(0)};${erreurs}`);
+      });
+      const panneau = document.getElementById('resultats');
+      panneau.innerHTML = `<h2>Terminé !</h2><p>Distance des cibles : ${DIST} m</p><pre>${lignes.join('\n')}</pre>` +
+        `<p>CSV à recopier :</p><pre>${csv.join('\n')}</pre><button onclick="location.reload()">Recommencer</button>`;
+      panneau.style.display = 'block';
+      window.resultatsCSV = csv.join('\n');
+    }
+
+    curseur.addEventListener('click', evenement => {
+      if (!enCours) return;
+      const touche = evenement.detail.intersectedEl && evenement.detail.intersectedEl.id === 'cible';
+      if (touche) {
+        resultats.push({ angle: essais[indexEssai], temps_ms: performance.now() - debutEssai, erreurs: erreursEssai });
+        bip(880);
+        if (navigator.vibrate) navigator.vibrate(25);
+        if (cible) cible.remove();
+        cible = null;
+        indexEssai++;
+        if (indexEssai >= essais.length) terminer();
+        else setTimeout(nouvelleCible, 500);
+      } else {
+        erreursEssai++;
+        bip(200, 0.15);
+      }
+    });
+
+    boutonDemarrer.addEventListener('click', () => {
+      boutonDemarrer.style.display = 'none';
+      resultats.length = 0;
+      essais = melanger(ANGLES.flatMap(angle => Array(ESSAIS_PAR_TAILLE).fill(angle)));
+      indexEssai = 0;
+      enCours = true;
+      nouvelleCible();
+    });
+  </script>
+</body>
+</html>
